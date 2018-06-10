@@ -63,58 +63,36 @@ public class SimonEngine
     public static void main(String[] args) throws Exception {
     	if(args[0].equals("nuevo")){
     		if(args[1].equals("e")){
+    			//seteo archivo origen
     			setUp("C:\\Users\\Hym\\Desktop\\criptoBMP.bmp");
+    			
+    			//encripto clave
 	    		 byte[] passwordBytes = args[2].getBytes("UTF-8");
 			      MessageDigest md = MessageDigest.getInstance("MD5");
 			      byte[] derivedKey = md.digest(passwordBytes);
-			      encryptFileWrapper("", derivedKey);
+			     
+			      //encripto
 			      byte[] archivoEncriptado =  process(image,derivedKey);
+			      //escribo el archivo
 			      try (FileOutputStream fos = new FileOutputStream("C:\\Users\\Hym\\Desktop\\criptoBMPEncriptada.bmp")) {
 		        	   fos.write(archivoEncriptado);
-		        	   //fos.close(); There is no more need for this line since you had created the instance of "fos" inside the try. And this will automatically close the OutputStream
 		        	}
     		}else{
+    			//seteo archivo origen
+    			setUp("C:\\Users\\Hym\\Desktop\\criptoBMPEncriptada.bmp");
+    			
+    			//encripto clave
     			byte[] passwordBytes = args[2].getBytes("UTF-8");
 			      MessageDigest md = MessageDigest.getInstance("MD5");
 			      byte[] derivedKey = md.digest(passwordBytes);
-    			  String plaintext = decryptFileWrapper(args[1], derivedKey);
-    			System.out.println("Estamos trabajando aun");
+    			  
+			      //desencripto
+    			  byte[] archivoDesencriptado =  processDesencrypt(image,derivedKey);
+    			  //escribo el archivo
+			      try (FileOutputStream fos = new FileOutputStream("C:\\Users\\Hym\\Desktop\\criptoBMPDencriptada.bmp")) {
+		        	   fos.write(archivoDesencriptado);
+		        	}
     		}
-    	}else{
-		      if(args.length != 3){
-		        System.out.println("Error - Unexpected amount of arguments");  
-		      }
-		      
-		      //Derivamos la llave a partir de la password
-		      byte[] passwordBytes = args[2].getBytes("UTF-8");
-		      MessageDigest md = MessageDigest.getInstance("MD5");
-		      byte[] derivedKey = md.digest(passwordBytes);
-		     // File file = new File("C:\\Users\\Hym\\Desktop\\cripto.jpg");
-		      
-		     // String base64Ciphertext = encryptWrapper(args[1],derivedKey);
-		      
-		      
-		      if(args[0].equals("encrypt")){
-		        
-		        System.out.println("Texto claro (legible): " + args[1]);
-		        System.out.println("Texto claro (base64): " + 
-		              new String(Base64.getEncoder().encode(args[1].getBytes())));
-		        //Encriptamos y mostramos el ciphertext codificado en base64
-		        String base64Ciphertext = encryptWrapper(args[1],derivedKey);
-		        System.out.println("Criptograma (base64): " + base64Ciphertext);
-		      }
-		      else if(args[0].equals("decrypt")){
-		          System.out.println("Criptograma (base64): " + args[1]);
-		          String plaintext = decryptWrapper(args[1], derivedKey);
-		          plaintext.trim();
-		          System.out.println("Texto claro (legible): " + plaintext);
-		          System.out.println("Texto claro (base64): " + 
-		              new String(Base64.getEncoder().encode(plaintext.getBytes())));
-		      }
-		      else{
-		          System.out.println("Error - Invoked operation does not exist: " + args[0]);
-		          System.out.println("Call prodedure: [encrypt|decrypt] [plaintext|ciphertext] [password]");
-		      }
     	}
       }
     private static String encryptFileWrapper(String plaintextMessage, byte[] key) throws NoSuchAlgorithmException, IOException{
@@ -459,6 +437,57 @@ public class SimonEngine
         return new String(bytesAsChars);
       }
     
+    private static byte[] decryptFileWrapper(byte[] bytesEncrypt, byte[] key) throws FileNotFoundException, IOException{
+   	 final byte[] encryptedByteStream = bytesEncrypt;
+       //El método para desencriptar tiene una mecánica muy similar al encriptado
+       //De la encripción obtuvimos el criptograma codificado en base64
+       //Tomamos ese base64 y lo convertimos nuevamente a un stream de bytes 
+      // byte[] encryptedByteStream = Base64.getDecoder().decode(base64Ciphertext);
+       
+       //El stream de bytes lo vamos partiendo en bloques y desencriptamos cada
+       //bloque por separado (estamos operando en modo ECB)
+       //El blockArrayMirror es una copia que necesitamos por cómo funciona CBC
+       byte[][] blockArray = new byte[encryptedByteStream.length / 8][];
+       byte[][] blockArrayMirror = new byte[encryptedByteStream.length / 8][];
+       //El IV lo tenemos en los últimos 8 bytes del stream de bytes
+       int indexLastBlock = encryptedByteStream.length - 8;
+       byte[] ivBlock = Arrays.copyOfRange(encryptedByteStream,indexLastBlock,indexLastBlock+8);
+       
+       //Como en el último bloque teníamos el iv, restamos uno en la iteración
+       for(int i = 0; i < blockArray.length - 1; i++){
+           blockArray[i] = Arrays.copyOfRange(encryptedByteStream,8*i,8*i+8);
+           blockArrayMirror[i] = Arrays.copyOfRange(encryptedByteStream,8*i,8*i+8);
+           
+           byte[] previousBlock = i == 0 ? Arrays.copyOfRange(ivBlock,0,8) : 
+                   Arrays.copyOfRange(blockArrayMirror[i-1],0,8);
+           
+           decrypt(SIMON_64, key, blockArray[i]);
+           
+           //Después de desencriptar, tengo que hacer xor con previous block
+           //Hacemos xor byte a byte entre el bloque descifrado y el cipher previo
+           int j = 0;
+           for (byte b : blockArray[i])
+             blockArray[i][j] = (byte)(b ^ previousBlock[j++]);
+       }
+       
+       //Nuevamente volcamos todo el stream de bytes a un único array
+       byte[] decryptedByteStream = new byte[blockArray.length * 8];
+       
+       for(int i = 0; i < blockArray.length - 1; i++){
+           System.arraycopy(blockArray[i], 0, decryptedByteStream, 8*i, 8);
+       }
+       
+       
+       try (FileOutputStream fos = new FileOutputStream("C:\\Users\\Hym\\Desktop\\criptoDesencriptada.jpg")) {
+    	   fos.write(decryptedByteStream);
+    	   //fos.close(); There is no more need for this line since you had created the instance of "fos" inside the try. And this will automatically close the OutputStream
+    	}
+       
+      
+       
+       //Finalmente generamos un string a partir del array de chars
+       return decryptedByteStream;
+     }
     
     private static String decryptWrapper(String base64Ciphertext, byte[] key){
       
@@ -1484,6 +1513,14 @@ public class SimonEngine
         return generateEncryptedImage(bodyEncripted, image);
     }
     
+    private static byte [] processDesencrypt (Image image, byte[] key) throws NoSuchAlgorithmException, IOException
+    {
+        byte[] bodyEncripted;
+        bodyEncripted=decryptFileWrapper(image.getBody(), key);
+ 
+
+        return generateEncryptedImage(bodyEncripted, image);
+    }
     
     public static void setUp(String path) throws Exception
     {
