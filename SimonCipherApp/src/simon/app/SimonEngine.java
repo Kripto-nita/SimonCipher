@@ -3,11 +3,25 @@
  * To change this template file, choose Tools | Templates
  * and open the template in the editor.
  */
-package simonproject;
+package simon.app;
 
+
+
+import java.io.File;
+import java.io.FileNotFoundException;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.UnsupportedEncodingException;
+import java.nio.file.Files;
 import java.util.Arrays;
+
+import javax.imageio.stream.ImageOutputStreamImpl;
+
+
+import static org.apache.commons.io.IOUtils.toByteArray;
+import simon.util.Image;
+import simon.util.ImageLoader;
+
 import java.util.*;
 import java.security.*;
 import java.sql.Timestamp;
@@ -22,6 +36,12 @@ import java.sql.Timestamp;
  
 public class SimonEngine
 {
+	
+	 private static byte [] bytesImage = null;
+	    private static byte [] bytesBody = null;
+	    private static byte [] bytesHeader = null;
+	 private static ImageLoader imageLoader = new ImageLoader();
+	 private static Image image = null;
     //dd if=originalimage.bmp of=encryptedfilename.bmp bs=1 count=54 conv=notrunc
     /** Simon32 - 16 bit words, 32 bit block size, 64 bit key */
     public static final int SIMON_32 = 32;
@@ -40,41 +60,259 @@ public class SimonEngine
 
     private final SimonCipher cipher;
     
-    public static void main(String[] args) throws IOException, NoSuchAlgorithmException {
-
-      if(args.length != 3){
-        System.out.println("Error - Unexpected amount of arguments");  
+    public static void main(String[] args) throws Exception {
+    	if(args[0].equals("nuevo")){
+    		if(args[1].equals("e")){
+    			setUp("C:\\Users\\Hym\\Desktop\\criptoBMP.bmp");
+	    		 byte[] passwordBytes = args[2].getBytes("UTF-8");
+			      MessageDigest md = MessageDigest.getInstance("MD5");
+			      byte[] derivedKey = md.digest(passwordBytes);
+			      encryptFileWrapper("", derivedKey);
+			      byte[] archivoEncriptado =  process(image,derivedKey);
+			      try (FileOutputStream fos = new FileOutputStream("C:\\Users\\Hym\\Desktop\\criptoBMPEncriptada.bmp")) {
+		        	   fos.write(archivoEncriptado);
+		        	   //fos.close(); There is no more need for this line since you had created the instance of "fos" inside the try. And this will automatically close the OutputStream
+		        	}
+    		}else{
+    			byte[] passwordBytes = args[2].getBytes("UTF-8");
+			      MessageDigest md = MessageDigest.getInstance("MD5");
+			      byte[] derivedKey = md.digest(passwordBytes);
+    			  String plaintext = decryptFileWrapper(args[1], derivedKey);
+    			System.out.println("Estamos trabajando aun");
+    		}
+    	}else{
+		      if(args.length != 3){
+		        System.out.println("Error - Unexpected amount of arguments");  
+		      }
+		      
+		      //Derivamos la llave a partir de la password
+		      byte[] passwordBytes = args[2].getBytes("UTF-8");
+		      MessageDigest md = MessageDigest.getInstance("MD5");
+		      byte[] derivedKey = md.digest(passwordBytes);
+		     // File file = new File("C:\\Users\\Hym\\Desktop\\cripto.jpg");
+		      
+		     // String base64Ciphertext = encryptWrapper(args[1],derivedKey);
+		      
+		      
+		      if(args[0].equals("encrypt")){
+		        
+		        System.out.println("Texto claro (legible): " + args[1]);
+		        System.out.println("Texto claro (base64): " + 
+		              new String(Base64.getEncoder().encode(args[1].getBytes())));
+		        //Encriptamos y mostramos el ciphertext codificado en base64
+		        String base64Ciphertext = encryptWrapper(args[1],derivedKey);
+		        System.out.println("Criptograma (base64): " + base64Ciphertext);
+		      }
+		      else if(args[0].equals("decrypt")){
+		          System.out.println("Criptograma (base64): " + args[1]);
+		          String plaintext = decryptWrapper(args[1], derivedKey);
+		          plaintext.trim();
+		          System.out.println("Texto claro (legible): " + plaintext);
+		          System.out.println("Texto claro (base64): " + 
+		              new String(Base64.getEncoder().encode(plaintext.getBytes())));
+		      }
+		      else{
+		          System.out.println("Error - Invoked operation does not exist: " + args[0]);
+		          System.out.println("Call prodedure: [encrypt|decrypt] [plaintext|ciphertext] [password]");
+		      }
+    	}
       }
-      
-      //Derivamos la llave a partir de la password
-      byte[] passwordBytes = args[2].getBytes("UTF-8");
-      MessageDigest md = MessageDigest.getInstance("MD5");
-      byte[] derivedKey = md.digest(passwordBytes);
-      
-      if(args[0].equals("encrypt")){
+    private static String encryptFileWrapper(String plaintextMessage, byte[] key) throws NoSuchAlgorithmException, IOException{
         
-        System.out.println("Texto claro (legible): " + args[1]);  
-        System.out.println("Texto claro (base64): " + 
-              new String(Base64.getEncoder().encode(args[1].getBytes())));
-        //Encriptamos y mostramos el ciphertext codificado en base64
-        String base64Ciphertext = encryptWrapper(args[1],derivedKey);
-        System.out.println("Criptograma (base64): " + base64Ciphertext);
+    	//File file = new File(plaintextMessage);
+    	
+        //Las primitivas de simon trabajan con array de bytes, así que convertimos
+        //el mensaje recibido como string en la invocación
+        final byte[] byteStream = Files.readAllBytes(new File("C:\\Users\\Hym\\Desktop\\cripto.jpg").toPath());
+        
+        //Simón encripta de a bloques, así que tenemos que subdividir el stream
+        //de bytes en bloques ya que cada uno se encripta por separado
+        //Puede pasar que no haya suficientes bytes para completar el último
+        //bloque, así que tendremos un padding con bytes nulos (00000000)
+        
+        //En la version 64/128 de Simon, el tamaño de bloque es 8 bytes
+        //Dividiendo el tamaño del stream de bytes por 8, tenemos cantidad de bloques
+        //Si hay algún resto, tendremos un bloque más y ahí habrá padding porque
+        //no llegamos a completar los 8 bytes
+        boolean padding = byteStream.length % 8 == 0 ? false : true;
+        int blocksInMessage = padding == true ? 
+                (byteStream.length / 8) + 1 : (byteStream.length / 8);
+        //Si el último bloque no tiene padding, la cantidad de bytes en el
+        //último bloque es 8, de lo contrario la cantidad la tengo en el resto
+        //de la división (por eso uso modulo)
+        int bytesInLastBlock = padding == false ? 8 : byteStream.length % 8;
+        
+        //Cada bloque es un array de 8 bytes
+        //Todos esos arrays los guardamos en BlockArray
+        //Agregamos un bloque más para guardar el IV
+        byte[][] blockArray = new byte[blocksInMessage+1][];
+        
+        //Tenemos una iteración por cada bloque
+        //En cada vuelta, copiamos una parte del stream de bytes del mensaje en
+        //su correspondiente bloque y encriptamos
+        //La primitiva de simon recibe la key y el bloque, y luego de encriptar
+        //pisa el contenido del vector recibido con el ciphertext
+        
+        
+        Timestamp timestamp = new Timestamp(System.currentTimeMillis());
+        byte[] ivBytes = timestamp.toString().getBytes("UTF-8");
+        MessageDigest md = MessageDigest.getInstance("SHA-256");
+        byte[] ivHash = md.digest(ivBytes);
+        byte[] ivBlock = Arrays.copyOfRange(ivHash,0,8);
+        
+        //Iteramos hasta menor que length-1 porque el último bloque es el IV
+        //El IV no tiene que ser un secreto, es sólo para dar más aleatoriedad al
+        //ciphertext. Como necesitamos usar el mismo iv cuando desencriptamos, lo
+        //mandamos como parte del mensaje
+        for(int i = 0; i < blockArray.length - 1; i++){
+            blockArray[i] = Arrays.copyOfRange(byteStream,8*i,8*i+8);
+            
+            //En CBC, antes de encriptar un bloque debemos hacer xor con el bloque
+            //anterior. Si es la primera iteración, el bloque anterior es el IV
+            byte[] previousBlock = i == 0 ? Arrays.copyOfRange(ivBlock,0,8) : 
+                    Arrays.copyOfRange(blockArray[i-1],0,8);
+
+            //Hacemos xor byte a byte entre el bloque a cifrar y el anterior
+            //El resultado lo volvemos a guardar en el bloque a cifrar
+            int j = 0;
+            for (byte b : blockArray[i])
+              blockArray[i][j] = (byte)(b ^ previousBlock[j++]);
+            
+            encrypt(SIMON_64, key, blockArray[i]);
+        }
+        blockArray[blockArray.length - 1] = Arrays.copyOfRange(ivBlock,0,8);
+        //Al finalizar este bucle, en blockArray tenemos todo el ciphertext 
+        //pero separado en bloques.
+        //Generamos un nuevo array de bytes; el tamaño está dado por la cantidad
+        //de bloques y la cantidad de elementos en cada bloque. Luego iteramos
+        //sobre el array de los bloques y vamos copiando el contenido de cada
+        //bloque en este nuevo array unidimensional (volvemos a juntar todos los
+        //bytes ya que tenerlos separados en bloques no es conveniente
+        byte[] encryptedByteStream = new byte[blockArray.length * 8];
+        int index = 0;
+        for (byte[] oneBlock : blockArray) {
+            //oneBlock es el origen de la copia
+            //"0" es la posición en el objeto origen (siempre 0)
+            //encryptedByteStream es el objeto de destino
+            //index se mueve por 8 (tamaño del bloque)
+            //Copiamos 8 bytes en cada iteración
+            System.arraycopy(oneBlock, 0, encryptedByteStream, index, 8);
+            index += 8;
+        }
+
+        //Luego de encriptar el mensaje, tenemos un array de bytes
+        //Si queremos mostrar esta información por pantalla, o necesitamos transmitirla
+        //a otro sistema, necesitamos usar una representación en texto de esta información
+        //Tal como está ahora, si tratamos de mostrarlo como string vamos a ver basura,
+        //así que lo convertimos a base64 
+        
+       // FileUtils.writeByteArrayToFile(new File("pathname"), encryptedByteStream);
+        
+        try (FileOutputStream fos = new FileOutputStream("C:\\Users\\Hym\\Desktop\\criptoEncriptada.jpg")) {
+        	   fos.write(encryptedByteStream);
+        	   //fos.close(); There is no more need for this line since you had created the instance of "fos" inside the try. And this will automatically close the OutputStream
+        	}
+        
+        return new String(Base64.getEncoder().encode(encryptedByteStream));
       }
-      else if(args[0].equals("decrypt")){
-          System.out.println("Criptograma (base64): " + args[1]);
-          String plaintext = decryptWrapper(args[1], derivedKey);
-          plaintext.trim();
-          System.out.println("Texto claro (legible): " + plaintext);
-          System.out.println("Texto claro (base64): " + 
-              new String(Base64.getEncoder().encode(plaintext.getBytes())));
+ private static byte[] encryptFileWrapper(byte[] bytesFile, byte[] key) throws NoSuchAlgorithmException, IOException{
+        
+    	//File file = new File(plaintextMessage);
+    	
+        //Las primitivas de simon trabajan con array de bytes, así que convertimos
+        //el mensaje recibido como string en la invocación
+        final byte[] byteStream = bytesFile;
+        
+        //Simón encripta de a bloques, así que tenemos que subdividir el stream
+        //de bytes en bloques ya que cada uno se encripta por separado
+        //Puede pasar que no haya suficientes bytes para completar el último
+        //bloque, así que tendremos un padding con bytes nulos (00000000)
+        
+        //En la version 64/128 de Simon, el tamaño de bloque es 8 bytes
+        //Dividiendo el tamaño del stream de bytes por 8, tenemos cantidad de bloques
+        //Si hay algún resto, tendremos un bloque más y ahí habrá padding porque
+        //no llegamos a completar los 8 bytes
+        boolean padding = byteStream.length % 8 == 0 ? false : true;
+        int blocksInMessage = padding == true ? 
+                (byteStream.length / 8) + 1 : (byteStream.length / 8);
+        //Si el último bloque no tiene padding, la cantidad de bytes en el
+        //último bloque es 8, de lo contrario la cantidad la tengo en el resto
+        //de la división (por eso uso modulo)
+        int bytesInLastBlock = padding == false ? 8 : byteStream.length % 8;
+        
+        //Cada bloque es un array de 8 bytes
+        //Todos esos arrays los guardamos en BlockArray
+        //Agregamos un bloque más para guardar el IV
+        byte[][] blockArray = new byte[blocksInMessage+1][];
+        
+        //Tenemos una iteración por cada bloque
+        //En cada vuelta, copiamos una parte del stream de bytes del mensaje en
+        //su correspondiente bloque y encriptamos
+        //La primitiva de simon recibe la key y el bloque, y luego de encriptar
+        //pisa el contenido del vector recibido con el ciphertext
+        
+        
+        Timestamp timestamp = new Timestamp(System.currentTimeMillis());
+        byte[] ivBytes = timestamp.toString().getBytes("UTF-8");
+        MessageDigest md = MessageDigest.getInstance("SHA-256");
+        byte[] ivHash = md.digest(ivBytes);
+        byte[] ivBlock = Arrays.copyOfRange(ivHash,0,8);
+        
+        //Iteramos hasta menor que length-1 porque el último bloque es el IV
+        //El IV no tiene que ser un secreto, es sólo para dar más aleatoriedad al
+        //ciphertext. Como necesitamos usar el mismo iv cuando desencriptamos, lo
+        //mandamos como parte del mensaje
+        for(int i = 0; i < blockArray.length - 1; i++){
+            blockArray[i] = Arrays.copyOfRange(byteStream,8*i,8*i+8);
+            
+            //En CBC, antes de encriptar un bloque debemos hacer xor con el bloque
+            //anterior. Si es la primera iteración, el bloque anterior es el IV
+            byte[] previousBlock = i == 0 ? Arrays.copyOfRange(ivBlock,0,8) : 
+                    Arrays.copyOfRange(blockArray[i-1],0,8);
+
+            //Hacemos xor byte a byte entre el bloque a cifrar y el anterior
+            //El resultado lo volvemos a guardar en el bloque a cifrar
+            int j = 0;
+            for (byte b : blockArray[i])
+              blockArray[i][j] = (byte)(b ^ previousBlock[j++]);
+            
+            encrypt(SIMON_64, key, blockArray[i]);
+        }
+        blockArray[blockArray.length - 1] = Arrays.copyOfRange(ivBlock,0,8);
+        //Al finalizar este bucle, en blockArray tenemos todo el ciphertext 
+        //pero separado en bloques.
+        //Generamos un nuevo array de bytes; el tamaño está dado por la cantidad
+        //de bloques y la cantidad de elementos en cada bloque. Luego iteramos
+        //sobre el array de los bloques y vamos copiando el contenido de cada
+        //bloque en este nuevo array unidimensional (volvemos a juntar todos los
+        //bytes ya que tenerlos separados en bloques no es conveniente
+        byte[] encryptedByteStream = new byte[blockArray.length * 8];
+        int index = 0;
+        for (byte[] oneBlock : blockArray) {
+            //oneBlock es el origen de la copia
+            //"0" es la posición en el objeto origen (siempre 0)
+            //encryptedByteStream es el objeto de destino
+            //index se mueve por 8 (tamaño del bloque)
+            //Copiamos 8 bytes en cada iteración
+            System.arraycopy(oneBlock, 0, encryptedByteStream, index, 8);
+            index += 8;
+        }
+
+        //Luego de encriptar el mensaje, tenemos un array de bytes
+        //Si queremos mostrar esta información por pantalla, o necesitamos transmitirla
+        //a otro sistema, necesitamos usar una representación en texto de esta información
+        //Tal como está ahora, si tratamos de mostrarlo como string vamos a ver basura,
+        //así que lo convertimos a base64 
+        
+       // FileUtils.writeByteArrayToFile(new File("pathname"), encryptedByteStream);
+        
+      /*  try (FileOutputStream fos = new FileOutputStream("C:\\Users\\Hym\\Desktop\\criptoEncriptada.jpg")) {
+        	   fos.write(encryptedByteStream);
+        	   //fos.close(); There is no more need for this line since you had created the instance of "fos" inside the try. And this will automatically close the OutputStream
+        	}*/
+        
+        return encryptedByteStream;
       }
-      else{
-          System.out.println("Error - Invoked operation does not exist: " + args[0]);
-          System.out.println("Call prodedure: [encrypt|decrypt] [plaintext|ciphertext] [password]");
-      }
-      
-      }
-    
     private static String encryptWrapper(String plaintextMessage, byte[] key) throws UnsupportedEncodingException, NoSuchAlgorithmException{
       
       //Las primitivas de simon trabajan con array de bytes, así que convertimos
@@ -163,6 +401,64 @@ public class SimonEngine
       //así que lo convertimos a base64    
       return new String(Base64.getEncoder().encode(encryptedByteStream));
     }
+    
+    private static String decryptFileWrapper(String base64Ciphertext, byte[] key) throws FileNotFoundException, IOException{
+    	 final byte[] encryptedByteStream = Files.readAllBytes(new File("C:\\Users\\Hym\\Desktop\\criptoEncriptada.jpg").toPath());
+        //El método para desencriptar tiene una mecánica muy similar al encriptado
+        //De la encripción obtuvimos el criptograma codificado en base64
+        //Tomamos ese base64 y lo convertimos nuevamente a un stream de bytes 
+       // byte[] encryptedByteStream = Base64.getDecoder().decode(base64Ciphertext);
+        
+        //El stream de bytes lo vamos partiendo en bloques y desencriptamos cada
+        //bloque por separado (estamos operando en modo ECB)
+        //El blockArrayMirror es una copia que necesitamos por cómo funciona CBC
+        byte[][] blockArray = new byte[encryptedByteStream.length / 8][];
+        byte[][] blockArrayMirror = new byte[encryptedByteStream.length / 8][];
+        //El IV lo tenemos en los últimos 8 bytes del stream de bytes
+        int indexLastBlock = encryptedByteStream.length - 8;
+        byte[] ivBlock = Arrays.copyOfRange(encryptedByteStream,indexLastBlock,indexLastBlock+8);
+        
+        //Como en el último bloque teníamos el iv, restamos uno en la iteración
+        for(int i = 0; i < blockArray.length - 1; i++){
+            blockArray[i] = Arrays.copyOfRange(encryptedByteStream,8*i,8*i+8);
+            blockArrayMirror[i] = Arrays.copyOfRange(encryptedByteStream,8*i,8*i+8);
+            
+            byte[] previousBlock = i == 0 ? Arrays.copyOfRange(ivBlock,0,8) : 
+                    Arrays.copyOfRange(blockArrayMirror[i-1],0,8);
+            
+            decrypt(SIMON_64, key, blockArray[i]);
+            
+            //Después de desencriptar, tengo que hacer xor con previous block
+            //Hacemos xor byte a byte entre el bloque descifrado y el cipher previo
+            int j = 0;
+            for (byte b : blockArray[i])
+              blockArray[i][j] = (byte)(b ^ previousBlock[j++]);
+        }
+        
+        //Nuevamente volcamos todo el stream de bytes a un único array
+        byte[] decryptedByteStream = new byte[blockArray.length * 8];
+        
+        for(int i = 0; i < blockArray.length - 1; i++){
+            System.arraycopy(blockArray[i], 0, decryptedByteStream, 8*i, 8);
+        }
+        
+        
+        try (FileOutputStream fos = new FileOutputStream("C:\\Users\\Hym\\Desktop\\criptoDesencriptada.jpg")) {
+     	   fos.write(decryptedByteStream);
+     	   //fos.close(); There is no more need for this line since you had created the instance of "fos" inside the try. And this will automatically close the OutputStream
+     	}
+        
+        //Generamos un array de chars para tener el caracter que representa
+        //cada byte que quedó en el stream
+        char[] bytesAsChars = new char[decryptedByteStream.length];
+        for(int i = 0; i < decryptedByteStream.length; i++){
+              bytesAsChars[i] = (char)decryptedByteStream[i];
+        }
+        
+        //Finalmente generamos un string a partir del array de chars
+        return new String(bytesAsChars);
+      }
+    
     
     private static String decryptWrapper(String base64Ciphertext, byte[] key){
       
@@ -1146,5 +1442,56 @@ public class SimonEngine
         }
 
     }
+    
+    private static byte[] generateEncryptedImage(byte[] bodyEncript, Image image)
+    {
+        byte[] encryptedImage = new byte[image.getHeader().length + image.getBody().length];
+        byte[] header = image.getHeader();
+        byte[] body = image.getBody();
+        int i;
+        int x =0;
+        for (i = 0; i < header.length; i++)
+        {
+            encryptedImage[i] = header[i];
+        }
+       for(; i < header.length + body.length; i++){
+    	   encryptedImage[i] = bodyEncript[x];
+    	   x++;
+       }
 
+        return encryptedImage;
+    }
+    
+    public static byte  setBitPosition(int bitValue, byte byteValue, int position)
+    {
+        position = 7 - position;
+        if(bitValue == 1)
+        {
+            return (byte) (byteValue | (1 << position)) ;
+        }
+        else
+        {
+            return (byte) (byteValue & ~(1 << position));
+        }
+    }
+    
+    private static byte [] process (Image image, byte[] key) throws NoSuchAlgorithmException, IOException
+    {
+        byte[] bodyEncripted;
+        bodyEncripted=encryptFileWrapper(image.getBody(), key);
+ 
+
+        return generateEncryptedImage(bodyEncripted, image);
+    }
+    
+    
+    public static void setUp(String path) throws Exception
+    {
+        bytesImage = imageLoader.getBytes(path);
+        bytesHeader = imageLoader.getBytesHeader(bytesImage);
+        bytesBody = imageLoader.getBytesBody(bytesImage);
+        image = new Image(bytesImage, bytesBody, bytesHeader);
+    }
+    
+    
 }
