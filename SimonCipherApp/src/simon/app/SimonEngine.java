@@ -93,6 +93,41 @@ public class SimonEngine
 		        	   fos.write(archivoDesencriptado);
 		        	}
     		}
+    	}else{
+		      if(args.length != 3){
+		        System.out.println("Error - Unexpected amount of arguments");  
+		      }
+		      
+		      //Derivamos la llave a partir de la password
+		      byte[] passwordBytes = args[2].getBytes("UTF-8");
+		      MessageDigest md = MessageDigest.getInstance("MD5");
+		      byte[] derivedKey = md.digest(passwordBytes);
+		     // File file = new File("C:\\Users\\Hym\\Desktop\\cripto.jpg");
+		      
+		     // String base64Ciphertext = encryptWrapper(args[1],derivedKey);
+		      
+		      
+		      if(args[0].equals("encrypt")){
+		        
+		        System.out.println("Texto claro (legible): " + args[1]);
+		        System.out.println("Texto claro (base64): " + 
+		              new String(Base64.getEncoder().encode(args[1].getBytes())));
+		        //Encriptamos y mostramos el ciphertext codificado en base64
+		        String base64Ciphertext = encryptWrapper(args[1],derivedKey);
+		        System.out.println("Criptograma (base64): " + base64Ciphertext);
+		      }
+		      else if(args[0].equals("decrypt")){
+		          System.out.println("Criptograma (base64): " + args[1]);
+		          String plaintext = decryptWrapper(args[1], derivedKey);
+		          plaintext.trim();
+		          System.out.println("Texto claro (legible): " + plaintext);
+		          System.out.println("Texto claro (base64): " + 
+		              new String(Base64.getEncoder().encode(plaintext.getBytes())));
+		      }
+		      else{
+		          System.out.println("Error - Invoked operation does not exist: " + args[0]);
+		          System.out.println("Call prodedure: [encrypt|decrypt] [plaintext|ciphertext] [password]");
+		      }
     	}
       }
     private static String encryptFileWrapper(String plaintextMessage, byte[] key) throws NoSuchAlgorithmException, IOException{
